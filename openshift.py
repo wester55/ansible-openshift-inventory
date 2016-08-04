@@ -1,6 +1,5 @@
-import ConfigParser, argparse, os, sys, subprocess
-import json
-
+#!/usr/bin/env python
+import ConfigParser, argparse, os, sys, subprocess, json
 
 class OcInventory(object):
 
@@ -18,14 +17,19 @@ class OcInventory(object):
             self.oc_password = str(config.get('Global', 'oc_password')).rstrip('\',\"').lstrip('\',\"')
             self.oc_exe_path = str(config.get('Global', 'oc_exe_path')).rstrip('\',\"').lstrip('\',\"')
         except:
-            print("""Please make sure openshift.ini config file exists in same folder where openshift.py.
-        It must have section [Global] with at least 4 parameters, for example:
-                    [Global]
-                    oc_master = 'master.some.site'
-                    oc_master_port = '8443'
-                    oc_user = 'testuser'
-                    oc_password = 'redhat'""")
-            exit(1)
+            self.oc_master = os.environ.get('OC_MASTER',None)
+            self.oc_master_port = os.environ.get('OC_MASTER_PORT',None)
+            self.oc_user = os.environ.get('OC_USER',None)
+            self.oc_password = os.environ.get('OC_PASSWORD',None)
+            self.oc_exe_path = os.environ.get('OC_EXE_PATH',None)
+            if not (self.oc_master and self.oc_master_port and self.oc_user and self.oc_password):
+                print("Not all required variables initialized.")
+                exit(1)
+            if not self.oc_exe_path:
+                try:
+                    self.oc_exe_path = str(subprocess.check_output('which oc', shell=True)).rstrip("\n")
+                except:
+                    sys.exit('ERROR: executable oc not found')
 
     def parse_cli_args(self):
         ''' Command line argument processing '''
