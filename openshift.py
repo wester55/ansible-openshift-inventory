@@ -3,8 +3,22 @@ import ConfigParser, argparse, os, sys, subprocess, json
 
 class OcInventory(object):
 
+    def __init__(self):
+
+        self.data_to_print = {}
+        self.parse_cli_args()
+        self.read_settings()
+        self.login()
+
+        if self.args.host:
+            self.data_to_print = self.get_host_info(self.args.host)
+        elif self.args.list:
+            self.data_to_print = self.get_inventory()
+
+        print(str(self.data_to_print).replace('\'', '"'))
+
     def _empty_inventory(self):
-        return {"_meta": {"hostvars": {}}}
+        return {"pods":{"hosts":[],"vars":{}},"_meta":{"hostvars":{}}}
 
     def read_settings(self):
 
@@ -41,26 +55,11 @@ class OcInventory(object):
                             help='Get all the variables about a specific instance')
         self.args = parser.parse_args()
 
-    def __init__(self):
-
-        self.inventory = self._empty_inventory()
-        self.data_to_print = {}
-        self.parse_cli_args()
-        self.read_settings()
-        self.login()
-
-        if self.args.host:
-            self.data_to_print = self.get_host_info(self.args.host)
-        elif self.args.list:
-            self.data_to_print = self.get_inventory()
-
-        print(self.data_to_print)
-
     def get_host_info(self,instance):
 
         result = {}
         try:
-            out = json.loads(subprocess.check_output([self.oc_exe_path, 'export', 'pod', instance, '--output=json'], shell=True))
+            out = json.loads(subprocess.check_output([self.oc_exe_path, 'export', 'pod', instance, '--output=json'], shell=self.set_shell()))
             result["ansible_host"] = str(out['spec']['nodeName'])
             return result
         except:
@@ -69,49 +68,37 @@ class OcInventory(object):
     def get_inventory(self):
 
         result = self._empty_inventory()
-        cont = subprocess.check_output([self.oc_exe_path, 'get', 'pods'], shell=True)
+        cont = subprocess.check_output([self.oc_exe_path, 'get', 'pods'], shell=self.set_shell())
         for line in cont.split('\n'):
             if line is not '':
                 if not line.startswith("NAME"):
                     instance = line.split()[0]
                     if not instance.endswith("build"):
-                        out = json.loads(subprocess.check_output([self.oc_exe_path, 'export', 'pod', instance, '--output=json'], shell=True))
-                        result["_meta"]["hostvars"][instance] = {"ansible_host":str(out['spec']['nodeName'])}
+                        out = json.loads(subprocess.check_output([self.oc_exe_path, 'export', 'pod', instance, '--output=json'], shell=self.set_shell()))
+                        result["_meta"]["hostvars"][instance] = {"ansible_ssh_host":str(out['spec']['nodeName'])}
+                        result["pods"]["hosts"].append(str(instance))
         return result
 
     def login(self):
-        result = subprocess.check_output([self.oc_exe_path,'login',self.oc_master + ":" + self.oc_master_port,'-u',self.oc_user,'-p',self.oc_password],shell=True)
+        try:
+            with open(os.devnull, 'w') as devnull:
+                result = str(subprocess.check_output([self.oc_exe_path,'whoami'],shell=self.set_shell(),stderr=devnull)).rstrip('\n')
+            if result == self.oc_user:
+                return True
+        except:
+            pass
+        with open(os.devnull, 'w') as devnull:
+            result = subprocess.check_output([self.oc_exe_path,'login',self.oc_master + ":" + self.oc_master_port,'-u',self.oc_user,'-p',self.oc_password,'--insecure-skip-tls-verify=true'],shell=self.set_shell(),stderr=devnull)
         if not str(result).startswith("Login successful."):
             print("Unable to login to Openshift master")
+            print(result)
             exit(1)
 
-    def get_auth_error_message(self):
-        ''' create an informative error message if there is an issue authenticating'''
-        errors = ["Authentication error retrieving ec2 inventory."]
-        if None in [os.environ.get('AWS_ACCESS_KEY_ID'), os.environ.get('AWS_SECRET_ACCESS_KEY')]:
-            errors.append(' - No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY environment vars found')
+    def set_shell(self):
+        if sys.platform == "win32":
+            return True
         else:
-            errors.append(
-                ' - AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment vars found but may not be correct')
-
-        boto_paths = ['/etc/boto.cfg', '~/.boto', '~/.aws/credentials']
-        boto_config_found = list(p for p in boto_paths if os.path.isfile(os.path.expanduser(p)))
-        if len(boto_config_found) > 0:
-            errors.append(" - Boto configs found at '%s', but the credentials contained may not be correct" % ', '.join(
-                boto_config_found))
-        else:
-            errors.append(" - No Boto config found at any expected location '%s'" % ', '.join(boto_paths))
-
-        return '\n'.join(errors)
-
-    def fail_with_error(self, err_msg, err_operation=None):
-        '''log an error to std err for ansible-playbook to consume and exit'''
-        if err_operation:
-            err_msg = 'ERROR: "{err_msg}", while: {err_operation}'.format(
-                err_msg=err_msg, err_operation=err_operation)
-        sys.stderr.write(err_msg)
-        sys.exit(1)
-
+            return False
 
 # Run the script
 OcInventory()
